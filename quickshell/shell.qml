@@ -110,8 +110,14 @@ ShellRoot {
       root.green = pick("green") || root.green
       // Same single color as the window border (looknfeel.lua: the theme's muted).
       root.borderColor = Qt.alpha(pick("muted") || pick("selection") || pick("dark_foreground") || "#595959", 0.87)
+      if (text() !== root.themeText) { root.themeText = text(); root.wallRev++ }
     }
   }
+  property string themeText: ""
+  // The background is a symlink with a fixed path: Qt would keep showing the
+  // old image. Bumped on every theme load and whenever a notch appears (covers
+  // a background picked without a theme switch), it busts the notch's image.
+  property int wallRev: 0
 
   // ── Actions ───────────────────────────────────────────────────────────────
   // From the dashboard: the island first shrinks back to the pill, then the
@@ -788,6 +794,7 @@ ShellRoot {
       readonly property real notchScale: 0.76
       readonly property int notchTop: 3
       readonly property bool notch: (notchScreen || root.forceNotch) && (root.mode === "idle" || root.mode === "ws")
+      onNotchChanged: if (notch) root.wallRev++
       WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
       // Only the pill receives the mouse.
       mask: root.shelfDragging ? parkRegion : pillRegion
@@ -883,8 +890,12 @@ ShellRoot {
         property string glyph: ""
         property color glyphColor: root.accent
         property real extra: 0            // extra room for wide satellites first
+        // Stays with the notch too (the shelf: otherwise unreachable in a browser):
+        // shrunk like the pill, next to it, and the notch widens to wrap both.
+        property bool inNotch: false
+        readonly property bool notched: inNotch && win.notch
         signal clicked()
-        readonly property bool shown: on && !win.notch && (root.mode === "idle" || root.mode === "ws")
+        readonly property bool shown: on && (!win.notch || inNotch) && (root.mode === "idle" || root.mode === "ws")
         // On hover (quick actions) caffeine and do not disturb don't vanish: the
         // same circle moves into the pill and grows to its button's spot,
         // becoming the button (like the clock).
@@ -894,8 +905,8 @@ ShellRoot {
         property bool riding: false
         onDockedChanged: if (docked) riding = true; else rideOff.restart()
         Timer { id: rideOff; interval: 700; onTriggered: sat.riding = false }
-        z: riding ? 5 : 0
-        readonly property real shadowOpacity: docked ? 0 : opacity
+        z: riding ? 5 : notched ? 3 : 0
+        readonly property real shadowOpacity: docked || notched ? 0 : opacity
         // Final position computed from the idle pill (not the one still
         // animating): so it slides back right away, with the same spring.
         // It follows the real pill: on workspace change the pill widens and the
@@ -905,9 +916,14 @@ ShellRoot {
         width: root.idleHeight
         height: root.idleHeight
         radius: height / 2
-        y: docked ? root.pillTop + 30 - height / 2 : root.pillTop
-        x: docked ? dockX - width / 2 : shown ? restX : idleRight - width
-        scale: docked ? 44 / root.idleHeight : shown ? 1 : 0.4
+        // With the notch: same scale as the pill, top-aligned with it (scale is
+        // around the center, hence the offsets).
+        readonly property real notchRestX: win.width / 2 + win.restWidth * win.notchScale / 2 + 6 * win.notchScale
+                                           - width * (1 - win.notchScale) / 2
+        readonly property real notchY: win.notchTop - height * (1 - win.notchScale) / 2
+        y: docked ? root.pillTop + 30 - height / 2 : notched ? notchY : root.pillTop
+        x: docked ? dockX - width / 2 : shown ? (notched ? notchRestX : restX) : idleRight - width
+        scale: docked ? 44 / root.idleHeight : shown ? (notched ? win.notchScale : 1) : 0.4
         opacity: shown || docked ? 1 : 0
         color: docked ? root.accent : root.pillColor
         Behavior on x { enabled: root.animate; SpringAnimation { spring: 3.4; damping: 0.3; epsilon: 0.3 } }
@@ -980,8 +996,11 @@ ShellRoot {
       Satellite {
         id: satShelf
         on: root.shelfItems.length > 0
+        inNotch: true
         slot: (root.stayAwake ? 1 : 0) + (root.dnd ? 1 : 0) + (satBattery.on ? 1 : 0)
         extra: satBattery.on ? satBattery.width - root.idleHeight : 0
+        // Right edge as drawn (window coordinates), for the notch.
+        readonly property real drawnRight: x + width / 2 + width * scale / 2
         onClicked: root.openShelf()
         // Same size and style as caffeine: circle with a filled glyph.
         glyph: "\u{F0687}"
@@ -1029,7 +1048,7 @@ ShellRoot {
         anchors.fill: satShelf
         radius: satShelf.radius
         blur: 20; offset.y: 5
-        opacity: satShelf.opacity
+        opacity: satShelf.shadowOpacity
         color: Qt.rgba(0, 0, 0, 0.42)
       }
       RectangularShadow {
@@ -1085,7 +1104,8 @@ ShellRoot {
         readonly property real big: pr + m                                       // border radius
         readonly property real cy: pill.y + ph - pr                              // bottom corner centers
         readonly property real cxL: pl + pr
-        readonly property real cxR: pl + pw - pr
+        // Shelf satellite next to the pill: the notch reaches it too.
+        readonly property real cxR: Math.max(pl + pw, satShelf.notched && satShelf.opacity > 0 ? offsetX + satShelf.drawnRight : 0) - pr
         // Fillet centers: r below the border, tangent to the big circle.
         readonly property real fy: edgeY + r
         readonly property real fdx: Math.sqrt(Math.max(0, (big + r) * (big + r) - (fy - cy) * (fy - cy)))
@@ -1104,7 +1124,7 @@ ShellRoot {
           Image {
             width: win.modelData.width
             height: win.modelData.height
-            source: "file://" + Quickshell.env("HOME") + "/.local/state/omarchy/current/background"
+            source: "file://" + Quickshell.env("HOME") + "/.local/state/omarchy/current/background?r=" + root.wallRev
             fillMode: Image.PreserveAspectCrop
             sourceSize: Qt.size(win.modelData.width * 2, win.modelData.height * 2)
             cache: false
