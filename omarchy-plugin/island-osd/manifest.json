@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "island.osd",
+  "name": "Island OSD",
+  "version": "1.0.0",
+  "author": "omarchy-island",
+  "description": "Sends volume, brightness and other OSD messages into the island; falls back to Omarchy's card when the island is not running.",
+  "kinds": [
+    "panel"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "panel": "Osd.qml"
+  },
+  "omarchy": {
+    "clonedFrom": "omarchy.osd"
+  }
+}

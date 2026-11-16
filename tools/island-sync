@@ -1,0 +1,63 @@
+#!/bin/bash
+# island-sync: keeps omarchy-island in step with Omarchy.
+#
+# Every clone the island uses (network, menu, notifications…) is rebuilt from
+# the Omarchy version installed right now plus our overlay
+# (omarchy-plugin/overlay), with a three-way merge per file. Omarchy's fixes
+# flow in; our changes stay. If a change of ours no longer applies, that file
+# falls back to Omarchy's version and you get a notification.
+#
+# It also restyles optional third-party plugins, re-adds Omadrop's shelf IPC,
+# and checks that nothing an update could move is out of place.
+#
+# Runs on its own after `omarchy update` (post-update hook) and every time the
+# island starts (systemd), which also covers `omarchy plugin update`.
+#
+#   island-sync            rebuild, check, notify
+#   island-sync --quiet    same, no notification when everything is fine
+set -uo pipefail
+source "$(dirname "$(readlink -f "$0")")/lib.sh"
+mkdir -p "$STATE"
+
+stamp=$(date +%Y%m%d-%H%M%S)
+log=$(mktemp)
+for x in "${PANELS[@]}"; do
+  d=$(clone_dir "$x") || continue
+  rebuild_clone "$x" "$d" "$stamp" >>"$log"
+done
+restyle_third_party >>"$log"
+patch_omadrop >>"$log"
+
+changed=$(grep -c '^updated:' "$log")
+conflicts=$(grep '^conflict:' "$log" | sed 's/^conflict: //' | paste -sd, -)
+backups=$(grep -c '^backup:' "$log")
+
+# ── Health check ─────────────────────────────────────────────────────────────
+problems=()
+for x in "${PANELS[@]}"; do clone_dir "$x" >/dev/null || problems+=("no clone of omarchy.$x (run install.sh again)"); done
+if [[ -f $SHELL_JSON ]]; then
+  while IFS= read -r line; do [[ -n $line ]] && problems+=("$line"); done < <(
+    jq -r --argjson need "$(bar_widgets | jq -R . | jq -s .)" '
+      (.disabledPlugins // []) as $off
+      | ([.bar.layout[]?[] | if type == "object" then .id else . end]) as $ids
+      | (["omarchy.osd"] - $off | map("\(.) is on again (shows twice next to the island)"))[]
+      , ($need - $ids | map("\(.) left the bar: its panel will not open"))[]
+    ' "$SHELL_JSON" 2>/dev/null)
+fi
+
+cat "$log"; rm -f "$log"
+printf 'PROBLEM: %s\n' "${problems[@]}" | grep -v '^PROBLEM: $'
+
+msg=""
+(( changed )) && msg+="Updated $changed files. "
+(( backups )) && msg+="Hand edits backed up in $STATE/backup. "
+[[ -n $conflicts ]] && msg+="Kept Omarchy's version of: $conflicts. "
+(( ${#problems[@]} )) && msg+="Problems: $(IFS='; '; echo "${problems[*]}")"
+
+(( changed )) && { omarchy-restart-shell >/dev/null 2>&1 || true; }
+if [[ -n $msg ]]; then
+  notify-send -a "Island" "omarchy-island synced with Omarchy" "$msg" 2>/dev/null || true
+elif [[ ${1:-} != --quiet ]]; then
+  echo "all in sync"
+fi
+[[ -z $conflicts ]] && (( ${#problems[@]} == 0 ))

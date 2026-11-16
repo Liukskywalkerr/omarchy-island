@@ -1,0 +1,30 @@
+name: Bug report
+description: Something in the island looks or behaves wrong
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you saw. A screenshot or clip helps a lot.
+    validations:
+      required: true
+  - type: input
+    id: omarchy
+    attributes:
+      label: Omarchy version
+      description: Output of `omarchy version`
+    validations:
+      required: true
+  - type: textarea
+    id: sync
+    attributes:
+      label: island-sync output
+      description: Run `tools/island-sync` from the repo folder and paste the output.
+      render: text
+  - type: textarea
+    id: log
+    attributes:
+      label: Island log
+      description: "`journalctl --user -u omarchy-island -n 80 --no-pager`"
+      render: text

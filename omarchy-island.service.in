@@ -1,0 +1,19 @@
+[Unit]
+Description=omarchy-island: a dynamic island in place of the Omarchy bar
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+# Rebuild the island's clones against the installed Omarchy before starting:
+# this also covers `omarchy plugin update`, which runs no hooks.
+ExecStartPre=-@REPO@/tools/island-sync --quiet
+# Omarchy's bar stays alive (its panels are what the island opens) but hidden
+# while the island runs; when the island stops, for any reason, it comes back.
+ExecStartPre=-/usr/bin/omarchy-toggle-bar on
+ExecStart=/usr/bin/qs -c island
+ExecStopPost=-/usr/bin/omarchy-toggle-bar off
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target

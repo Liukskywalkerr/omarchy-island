@@ -1,0 +1,16 @@
+#!/bin/bash
+# Vertical three-finger gestures (bound in ~/.config/hypr/input.lua):
+#   up   → closes the island dashboard if open, otherwise opens the overview (Mirador)
+#   down → closes the overview if open, otherwise opens the island dashboard
+overview_open() { hyprctl layers 2>/dev/null | grep -q "omarchy-workspace-overview"; }
+dash_open() { [[ $(qs -c island ipc call island mode 2>/dev/null) == dash ]]; }
+
+case ${1:-} in
+  up)
+    if dash_open; then qs -c island ipc call island toggle
+    else omarchy-shell shell summon mirador '{}'; fi ;;
+  down)
+    if overview_open; then omarchy-shell shell hide mirador
+    else dash_open || qs -c island ipc call island toggle; fi ;;
+  *) echo "usage: island-gesture up|down" >&2; exit 1 ;;
+esac

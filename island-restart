@@ -1,0 +1,3 @@
+#!/bin/bash
+# Restart the island after editing the QML.
+systemctl --user restart omarchy-island.service
