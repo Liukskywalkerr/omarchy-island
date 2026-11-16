@@ -6,7 +6,7 @@ music, notifications, volume, a control center, your screenshots, a shelf for fi
 
 <p align="center"><img src="docs/media/hero.webp" alt="omarchy-island: hover for quick actions, click for the control center" width="860"></p>
 
-<p align="center">🎬 <a href="https://youtu.be/VIDEO_ID"><b>Watch the 3-minute tour</b></a></p>
+<p align="center">🎬 <a href="https://github.com/Liukskywalkerr/omarchy-island/releases/download/v1.0.0/omarchy-island-tour.mp4"><b>Watch the 3-minute tour</b></a> · <a href="https://github.com/Liukskywalkerr/omarchy-island/releases/download/v1.0.0/omarchy-island-short.mp4">20-second short</a></p>
 
 ## What it does
 
