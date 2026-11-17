@@ -55,6 +55,7 @@ ShellRoot {
   // Reserved space at the top: windows start at reserve + Hyprland's gaps_out,
   // and the pill sits exactly halfway through that strip.
   readonly property int reserve: 34
+  readonly property bool stripByHypr: Quickshell.env("ISLAND_STRIP") === "hypr"
   property int gapsOut: 10
   readonly property int idleHeight: 30
   readonly property int pillTop: Math.max(2, Math.round((reserve + gapsOut - idleHeight) / 2))
@@ -819,7 +820,10 @@ ShellRoot {
       // all the way to the top and the island sits over them as a notch.
       readonly property var hyprMonitor: Hyprland.monitorFor(modelData)
       readonly property bool notchOk: root.notchOk(hyprMonitor ? hyprMonitor.activeWorkspace : null, modelData)
-      exclusiveZone: notchOk ? 0 : root.reserve
+      // ISLAND_STRIP=hypr: the strip is each workspace's own top gap, written by
+      // a Hyprland script with the same rule (a workspace keeps it while you swipe
+      // to it). Otherwise one reserved zone for the whole screen, switched here.
+      exclusiveZone: root.stripByHypr || notchOk ? 0 : root.reserve
       color: "transparent"
       mask: Region {}
       WlrLayershell.layer: WlrLayer.Bottom
