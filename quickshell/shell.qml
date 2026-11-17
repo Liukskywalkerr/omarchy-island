@@ -744,6 +744,23 @@ ShellRoot {
     }
     return tiled > 0
   }
+  // Gap between two windows under the pill (screen-local x of the two window
+  // edges), or null. With a gap the notch "bridges" the windows, but each keeps
+  // its own border, which turns down along its side.
+  function notchGap(ws, screen) {
+    if (!ws || !ws.toplevels || !screen) return null
+    const cx = screen.x + screen.width / 2
+    let l = -1, r = -1
+    for (const t of ws.toplevels.values) {
+      const ipc = t.lastIpcObject || {}
+      if (ipc.floating || !ipc.at || !ipc.size) continue
+      const a = ipc.at[0], b = ipc.at[0] + ipc.size[0]
+      if (a <= cx && cx <= b) return null
+      if (b <= cx && (l < 0 || b > l)) l = b
+      if (a >= cx && (r < 0 || a < r)) r = a
+    }
+    return l >= 0 && r >= 0 ? { l: l - screen.x, r: r - screen.x } : null
+  }
   property bool forceNotch: false   // testing: `ipc call island notch`
   function isBrowser(app) {
     return /^(zen|zen-browser|firefox|librewolf|floorp|chromium|google-chrome.*|brave-browser.*|microsoft-edge.*|vivaldi.*|helium)$/i.test(app || "")
@@ -809,6 +826,7 @@ ShellRoot {
       readonly property bool notchScreen: !fullscreenHere && root.notchOk(hyprMonitor ? hyprMonitor.activeWorkspace : null, modelData)
       readonly property real notchScale: 0.76
       readonly property int notchTop: 3
+      readonly property var notchGap: notchScreen ? root.notchGap(hyprMonitor ? hyprMonitor.activeWorkspace : null, modelData) : null
       readonly property bool notch: (notchScreen || root.forceNotch) && (root.mode === "idle" || root.mode === "ws")
       onNotchChanged: if (notch) root.wallRev++
       WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
@@ -1130,6 +1148,14 @@ ShellRoot {
         // Tangent point on the circle of radius big+o (o = stroke offset).
         function tx(side, o) { const cx = side < 0 ? cxL : cxR, fx = side < 0 ? fxL : fxR; return cx + (fx - cx) * (big + o) / (big + r) }
         function ty(o) { return cy + (fy - cy) * (big + o) / (big + r) }
+        // Bridge (gap between two windows under the pill): outer edges of the two
+        // window borders (Hyprland draws them outside the window, bw wide) and the
+        // bottom of the notch. Each window corner is rounded with radius r.
+        readonly property real bw: 2
+        readonly property real eL: win.notchGap ? win.notchGap.l + bw : 0
+        readonly property real eR: win.notchGap ? win.notchGap.r - bw : 0
+        readonly property real yb: cy + big
+        readonly property bool bridge: !!win.notchGap && eL - r > cxL && eR + r < cxR && eL < eR
 
         Item {
           id: wallStrip
@@ -1164,7 +1190,24 @@ ShellRoot {
           preferredRendererType: Shape.CurveRenderer
           NotchPath {
             strokeWidth: -1
-            fillColor: "black"
+            fillColor: notchLayer.bridge ? "transparent" : "black"
+            PathLine { x: notchLayer.fxR; y: notchLayer.edgeY - 1 }
+            PathLine { x: notchLayer.fxL; y: notchLayer.edgeY - 1 }
+          }
+          // Bridge: same notch plus the two rounded window corners and the gap.
+          ShapePath {
+            startX: notchLayer.fxL; startY: notchLayer.edgeY
+            PathArc { x: notchLayer.tx(-1, 0); y: notchLayer.ty(0); radiusX: notchLayer.r; radiusY: notchLayer.r; direction: PathArc.Clockwise }
+            PathArc { x: notchLayer.cxL; y: notchLayer.yb; radiusX: notchLayer.big; radiusY: notchLayer.big; direction: PathArc.Counterclockwise }
+            PathLine { x: notchLayer.eL - notchLayer.r; y: notchLayer.yb }
+            PathArc { x: notchLayer.eL; y: notchLayer.yb + notchLayer.r; radiusX: notchLayer.r; radiusY: notchLayer.r; direction: PathArc.Clockwise }
+            strokeWidth: -1
+            fillColor: notchLayer.bridge ? "black" : "transparent"
+            PathLine { x: notchLayer.eR; y: notchLayer.yb + notchLayer.r }
+            PathArc { x: notchLayer.eR + notchLayer.r; y: notchLayer.yb; radiusX: notchLayer.r; radiusY: notchLayer.r; direction: PathArc.Clockwise }
+            PathLine { x: notchLayer.cxR; y: notchLayer.yb }
+            PathArc { x: notchLayer.tx(1, 0); y: notchLayer.ty(0); radiusX: notchLayer.big; radiusY: notchLayer.big; direction: PathArc.Counterclockwise }
+            PathArc { x: notchLayer.fxR; y: notchLayer.edgeY; radiusX: notchLayer.r; radiusY: notchLayer.r; direction: PathArc.Clockwise }
             PathLine { x: notchLayer.fxR; y: notchLayer.edgeY - 1 }
             PathLine { x: notchLayer.fxL; y: notchLayer.edgeY - 1 }
           }
@@ -1177,9 +1220,34 @@ ShellRoot {
           maskThresholdMin: 0.5
           maskSpreadAtMin: 1.0
         }
+        // Bridge: two separate borders, one per window.
+        Shape {
+          anchors.fill: parent
+          visible: notchLayer.bridge
+          preferredRendererType: Shape.CurveRenderer
+          // Left window: around the pill, then down its own side.
+          ShapePath {
+            strokeWidth: 2; strokeColor: root.borderColor; fillColor: "transparent"; capStyle: ShapePath.FlatCap
+            startX: notchLayer.fxL; startY: notchLayer.edgeY + 1
+            PathArc { x: notchLayer.tx(-1, 1); y: notchLayer.ty(1); radiusX: notchLayer.r - 1; radiusY: notchLayer.r - 1; direction: PathArc.Clockwise }
+            PathArc { x: notchLayer.cxL; y: notchLayer.yb + 1; radiusX: notchLayer.big + 1; radiusY: notchLayer.big + 1; direction: PathArc.Counterclockwise }
+            PathLine { x: notchLayer.eL - notchLayer.r; y: notchLayer.yb + 1 }
+            PathArc { x: notchLayer.eL - 1; y: notchLayer.yb + notchLayer.r; radiusX: notchLayer.r - 1; radiusY: notchLayer.r - 1; direction: PathArc.Clockwise }
+          }
+          // Right window: up its own side, around the pill, back to the top border.
+          ShapePath {
+            strokeWidth: 2; strokeColor: root.borderColor; fillColor: "transparent"; capStyle: ShapePath.FlatCap
+            startX: notchLayer.eR + 1; startY: notchLayer.yb + notchLayer.r
+            PathArc { x: notchLayer.eR + notchLayer.r; y: notchLayer.yb + 1; radiusX: notchLayer.r - 1; radiusY: notchLayer.r - 1; direction: PathArc.Clockwise }
+            PathLine { x: notchLayer.cxR; y: notchLayer.yb + 1 }
+            PathArc { x: notchLayer.tx(1, 1); y: notchLayer.ty(1); radiusX: notchLayer.big + 1; radiusY: notchLayer.big + 1; direction: PathArc.Counterclockwise }
+            PathArc { x: notchLayer.fxR; y: notchLayer.edgeY + 1; radiusX: notchLayer.r - 1; radiusY: notchLayer.r - 1; direction: PathArc.Clockwise }
+          }
+        }
         // The Hyprland border continues along the notch.
         Shape {
           anchors.fill: parent
+          visible: !notchLayer.bridge
           preferredRendererType: Shape.CurveRenderer
           NotchPath {
             o: 1
