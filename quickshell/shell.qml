@@ -872,7 +872,11 @@ ShellRoot {
         return focusIpc.at[0] <= cx && cx <= focusIpc.at[0] + focusIpc.size[0]
       }
       readonly property var notchGap: notchScreen ? root.notchGap(hyprMonitor ? hyprMonitor.activeWorkspace : null, modelData) : null
-      readonly property bool notch: (notchScreen || root.forceNotch) && !root.wsSliding && (root.mode === "idle" || root.mode === "ws")
+      // notch = the pill takes its notch form (smaller, higher, slim) right away,
+      // during the workspace slide too: one movement. notchDrawn = the border and
+      // the carved background, which wait for the windows to stop.
+      readonly property bool notchDrawn: notch && !root.wsSliding
+      readonly property bool notch: (notchScreen || root.forceNotch) && (root.mode === "idle" || root.mode === "ws")
       onNotchChanged: if (notch) root.wallRev++
       WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
       // Only the pill receives the mouse.
@@ -1161,10 +1165,10 @@ ShellRoot {
       Item {
         id: notchLayer
         // Fades in and out while the pill shrinks.
-        opacity: win.notch ? 1 : 0
+        opacity: win.notchDrawn ? 1 : 0
         // During a workspace slide: gone at once (a fade-out would hang in mid-air).
         visible: opacity > 0 && !root.wsSliding
-        Behavior on opacity { enabled: root.animate; NumberAnimation { duration: win.notch ? 260 : 120; easing.type: Easing.OutCubic } }
+        Behavior on opacity { enabled: root.animate; NumberAnimation { duration: win.notchDrawn ? 260 : 120; easing.type: Easing.OutCubic } }
         // Full-screen coordinates (the island window is centered).
         readonly property real offsetX: (win.modelData.width - win.width) / 2
         x: -offsetX; y: 0
