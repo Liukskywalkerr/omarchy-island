@@ -778,6 +778,21 @@ ShellRoot {
     }
     return l >= 0 && r >= 0 ? { l: l - screen.x, r: r - screen.x } : null
   }
+  // ISLAND_HIDE=tiled: the island steps aside (and the windows go to the top)
+  // with a browser on its own or two or more tiled windows. It still appears for
+  // the dashboard (gesture, SUPER+D), notifications, OSD and the menu.
+  readonly property bool hideEnabled: Quickshell.env("ISLAND_HIDE") === "tiled"
+  function islandHides(ws) {
+    if (!root.hideEnabled || !ws || !ws.toplevels) return false
+    let n = 0, browser = false
+    for (const t of ws.toplevels.values) {
+      const ipc = t.lastIpcObject || {}
+      if (ipc.floating) continue
+      n++
+      browser = root.isBrowser((t.wayland && t.wayland.appId) || ipc.class || "")
+    }
+    return n >= 2 || (n === 1 && browser)
+  }
   property bool forceNotch: false   // testing: `ipc call island notch`
   function isBrowser(app) {
     return /^(zen|zen-browser|firefox|librewolf|floorp|chromium|google-chrome.*|brave-browser.*|microsoft-edge.*|vivaldi.*|helium)$/i.test(app || "")
@@ -825,7 +840,7 @@ ShellRoot {
       // ISLAND_STRIP=hypr: the strip is each workspace's own top gap, written by
       // a Hyprland script with the same rule (a workspace keeps it while you swipe
       // to it). Otherwise one reserved zone for the whole screen, switched here.
-      exclusiveZone: root.stripByHypr || notchOk ? 0 : root.reserve
+      exclusiveZone: root.stripByHypr || notchOk || root.islandHides(hyprMonitor ? hyprMonitor.activeWorkspace : null) ? 0 : root.reserve
       color: "transparent"
       mask: Region {}
       WlrLayershell.layer: WlrLayer.Bottom
@@ -854,7 +869,9 @@ ShellRoot {
       readonly property var hyprMonitor: Hyprland.monitorFor(modelData)
       readonly property bool fullscreenHere: !!hyprMonitor && !!hyprMonitor.activeWorkspace
                                              && hyprMonitor.activeWorkspace.hasFullscreen
-      visible: !fullscreenHere || root.mode === "osd"
+      readonly property bool hiddenHere: root.islandHides(hyprMonitor ? hyprMonitor.activeWorkspace : null)
+      visible: fullscreenHere ? root.mode === "osd"
+                              : (!hiddenHere || (root.mode !== "idle" && root.mode !== "ws"))
       // Windows up to the top (see notchOk): when idle the pill becomes a notch
       // and the window border wraps around it.
       readonly property bool notchScreen: !fullscreenHere && root.notchOk(hyprMonitor ? hyprMonitor.activeWorkspace : null, modelData)
