@@ -48,7 +48,7 @@ ShellRoot {
   }
   Connections {
     target: Hyprland
-    function onRawEvent(event) { if (event.name === "configreloaded") animProbe.running = true }
+    function onRawEvent(event) { if (event.name === "configreloaded") { animProbe.running = true; inactiveBorderProbe.running = true } }
   }
 
   // ── Geometry ──────────────────────────────────────────────────────────────
@@ -84,6 +84,20 @@ ShellRoot {
   property color red: "#ff453a"
   property color green: "#30d158"
   property color borderColor: "#595959"    // Hyprland window border (for the notch)
+  property color inactiveBorderColor: "#aa23306e"   // same, unfocused window (read from Hyprland)
+  Process {
+    id: inactiveBorderProbe
+    running: true
+    command: ["hyprctl", "-j", "getoption", "general:col.inactive_border"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        try {
+          const m = String(JSON.parse(text).gradient || "").match(/^([0-9a-fA-F]{8})/)
+          if (m) root.inactiveBorderColor = "#" + m[1]   // AARRGGBB, like Qt
+        } catch (e) {}
+      }
+    }
+  }
   // SF Pro if installed (it can't be shipped), otherwise the system sans.
   readonly property var fontList: Qt.fontFamilies()
   readonly property string textFont: fontList.includes("SF Pro Text") ? "SF Pro Text" : "sans-serif"
@@ -826,6 +840,23 @@ ShellRoot {
       readonly property bool notchScreen: !fullscreenHere && root.notchOk(hyprMonitor ? hyprMonitor.activeWorkspace : null, modelData)
       readonly property real notchScale: 0.76
       readonly property int notchTop: 3
+      // Focused window on this screen's workspace: the notch border takes the same
+      // active/inactive color Hyprland gives the window it belongs to.
+      readonly property var focusIpc: {
+        const a = Hyprland.activeToplevel
+        const ws = hyprMonitor ? hyprMonitor.activeWorkspace : null
+        return a && ws && a.workspace === ws && a.lastIpcObject && a.lastIpcObject.at ? a.lastIpcObject : null
+      }
+      function focusedEdge(left) {   // is the focused window the one ending/starting at the gap?
+        if (!focusIpc || !notchGap) return false
+        const x = focusIpc.at[0] - modelData.x
+        return left ? x + focusIpc.size[0] === notchGap.l : x === notchGap.r
+      }
+      readonly property bool centerFocused: {
+        if (!focusIpc || focusIpc.floating) return false
+        const cx = modelData.x + modelData.width / 2
+        return focusIpc.at[0] <= cx && cx <= focusIpc.at[0] + focusIpc.size[0]
+      }
       readonly property var notchGap: notchScreen ? root.notchGap(hyprMonitor ? hyprMonitor.activeWorkspace : null, modelData) : null
       readonly property bool notch: (notchScreen || root.forceNotch) && (root.mode === "idle" || root.mode === "ws")
       onNotchChanged: if (notch) root.wallRev++
@@ -1155,7 +1186,11 @@ ShellRoot {
         readonly property real eL: win.notchGap ? win.notchGap.l + bw : 0
         readonly property real eR: win.notchGap ? win.notchGap.r - bw : 0
         readonly property real yb: cy + big
-        readonly property bool bridge: !!win.notchGap && eL - r > cxL && eR + r < cxR && eL < eR
+        // The window corners shrink when the pill is narrow (clock only), so the
+        // bridge holds for every pill width (no flipping while it animates).
+        readonly property real rcL: Math.max(1.5, Math.min(r, eL - cxL))
+        readonly property real rcR: Math.max(1.5, Math.min(r, cxR - eR))
+        readonly property bool bridge: !!win.notchGap && eL - 1.5 > cxL && eR + 1.5 < cxR && eL < eR
 
         Item {
           id: wallStrip
@@ -1199,12 +1234,12 @@ ShellRoot {
             startX: notchLayer.fxL; startY: notchLayer.edgeY
             PathArc { x: notchLayer.tx(-1, 0); y: notchLayer.ty(0); radiusX: notchLayer.r; radiusY: notchLayer.r; direction: PathArc.Clockwise }
             PathArc { x: notchLayer.cxL; y: notchLayer.yb; radiusX: notchLayer.big; radiusY: notchLayer.big; direction: PathArc.Counterclockwise }
-            PathLine { x: notchLayer.eL - notchLayer.r; y: notchLayer.yb }
-            PathArc { x: notchLayer.eL; y: notchLayer.yb + notchLayer.r; radiusX: notchLayer.r; radiusY: notchLayer.r; direction: PathArc.Clockwise }
+            PathLine { x: notchLayer.eL - notchLayer.rcL; y: notchLayer.yb }
+            PathArc { x: notchLayer.eL; y: notchLayer.yb + notchLayer.rcL; radiusX: notchLayer.rcL; radiusY: notchLayer.rcL; direction: PathArc.Clockwise }
             strokeWidth: -1
             fillColor: notchLayer.bridge ? "black" : "transparent"
-            PathLine { x: notchLayer.eR; y: notchLayer.yb + notchLayer.r }
-            PathArc { x: notchLayer.eR + notchLayer.r; y: notchLayer.yb; radiusX: notchLayer.r; radiusY: notchLayer.r; direction: PathArc.Clockwise }
+            PathLine { x: notchLayer.eR; y: notchLayer.yb + notchLayer.rcR }
+            PathArc { x: notchLayer.eR + notchLayer.rcR; y: notchLayer.yb; radiusX: notchLayer.rcR; radiusY: notchLayer.rcR; direction: PathArc.Clockwise }
             PathLine { x: notchLayer.cxR; y: notchLayer.yb }
             PathArc { x: notchLayer.tx(1, 0); y: notchLayer.ty(0); radiusX: notchLayer.big; radiusY: notchLayer.big; direction: PathArc.Counterclockwise }
             PathArc { x: notchLayer.fxR; y: notchLayer.edgeY; radiusX: notchLayer.r; radiusY: notchLayer.r; direction: PathArc.Clockwise }
@@ -1227,18 +1262,18 @@ ShellRoot {
           preferredRendererType: Shape.CurveRenderer
           // Left window: around the pill, then down its own side.
           ShapePath {
-            strokeWidth: 2; strokeColor: root.borderColor; fillColor: "transparent"; capStyle: ShapePath.FlatCap
+            strokeWidth: 2; strokeColor: win.focusedEdge(true) ? root.borderColor : root.inactiveBorderColor; fillColor: "transparent"; capStyle: ShapePath.FlatCap
             startX: notchLayer.fxL; startY: notchLayer.edgeY + 1
             PathArc { x: notchLayer.tx(-1, 1); y: notchLayer.ty(1); radiusX: notchLayer.r - 1; radiusY: notchLayer.r - 1; direction: PathArc.Clockwise }
             PathArc { x: notchLayer.cxL; y: notchLayer.yb + 1; radiusX: notchLayer.big + 1; radiusY: notchLayer.big + 1; direction: PathArc.Counterclockwise }
-            PathLine { x: notchLayer.eL - notchLayer.r; y: notchLayer.yb + 1 }
-            PathArc { x: notchLayer.eL - 1; y: notchLayer.yb + notchLayer.r; radiusX: notchLayer.r - 1; radiusY: notchLayer.r - 1; direction: PathArc.Clockwise }
+            PathLine { x: notchLayer.eL - notchLayer.rcL; y: notchLayer.yb + 1 }
+            PathArc { x: notchLayer.eL - 1; y: notchLayer.yb + notchLayer.rcL; radiusX: Math.max(0.5, notchLayer.rcL - 1); radiusY: Math.max(0.5, notchLayer.rcL - 1); direction: PathArc.Clockwise }
           }
           // Right window: up its own side, around the pill, back to the top border.
           ShapePath {
-            strokeWidth: 2; strokeColor: root.borderColor; fillColor: "transparent"; capStyle: ShapePath.FlatCap
-            startX: notchLayer.eR + 1; startY: notchLayer.yb + notchLayer.r
-            PathArc { x: notchLayer.eR + notchLayer.r; y: notchLayer.yb + 1; radiusX: notchLayer.r - 1; radiusY: notchLayer.r - 1; direction: PathArc.Clockwise }
+            strokeWidth: 2; strokeColor: win.focusedEdge(false) ? root.borderColor : root.inactiveBorderColor; fillColor: "transparent"; capStyle: ShapePath.FlatCap
+            startX: notchLayer.eR + 1; startY: notchLayer.yb + notchLayer.rcR
+            PathArc { x: notchLayer.eR + notchLayer.rcR; y: notchLayer.yb + 1; radiusX: Math.max(0.5, notchLayer.rcR - 1); radiusY: Math.max(0.5, notchLayer.rcR - 1); direction: PathArc.Clockwise }
             PathLine { x: notchLayer.cxR; y: notchLayer.yb + 1 }
             PathArc { x: notchLayer.tx(1, 1); y: notchLayer.ty(1); radiusX: notchLayer.big + 1; radiusY: notchLayer.big + 1; direction: PathArc.Counterclockwise }
             PathArc { x: notchLayer.fxR; y: notchLayer.edgeY + 1; radiusX: notchLayer.r - 1; radiusY: notchLayer.r - 1; direction: PathArc.Clockwise }
@@ -1252,7 +1287,7 @@ ShellRoot {
           NotchPath {
             o: 1
             strokeWidth: 2
-            strokeColor: root.borderColor
+            strokeColor: win.centerFocused ? root.borderColor : root.inactiveBorderColor
             fillColor: "transparent"
             capStyle: ShapePath.FlatCap
           }
