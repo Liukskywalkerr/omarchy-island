@@ -675,10 +675,14 @@ ShellRoot {
     function osd(json: string): string { return root.showOsd(json) }
     function ping(): string { return "ok" }
     function notch(): void { root.forceNotch = !root.forceNotch }
-    // Diagnostics: for each workspace, whether it is "browser only" (no strip).
+    // Diagnostics: for each workspace, whether the windows go up to the top (no strip).
     function browsers(): string {
       let out = []
-      for (const w of Hyprland.workspaces.values) out.push(w.id + ":" + root.onlyBrowsers(w))
+      for (const w of Hyprland.workspaces.values) {
+        let scr = null
+        for (const s of Quickshell.screens) if (w.monitor && s.name === w.monitor.name) scr = s
+        out.push(w.id + ":" + root.notchOk(w, scr))
+      }
       return out.join(" ")
     }
     function test(what: string): string {
@@ -720,18 +724,25 @@ ShellRoot {
     }
   }
 
-  // Does the workspace contain only (tiled) browser windows?
-  function onlyBrowsers(ws) {
-    if (!ws || !ws.toplevels) return false
-    let browsers = 0
+  // Can the windows go all the way to the top, with the pill as a notch over them?
+  // Yes when the screen center (where the pill sits) is either a browser or the gap
+  // between two windows (2 columns: the notch bridges them). A terminal or any other
+  // app under the pill keeps the strip, so its first line stays visible. A single
+  // non-browser window (terminal/Files at 80%) is under the pill: strip stays.
+  function notchOk(ws, screen) {
+    if (!ws || !ws.toplevels || !screen) return false
+    const cx = screen.x + screen.width / 2
+    let tiled = 0
     for (const t of ws.toplevels.values) {
       const ipc = t.lastIpcObject || {}
-      if (ipc.floating) continue
-      const app = (t.wayland && t.wayland.appId) || ipc.class || ""
-      if (!root.isBrowser(app)) return false
-      browsers++
+      if (ipc.floating || !ipc.at || !ipc.size) continue
+      tiled++
+      if (ipc.at[0] <= cx && cx <= ipc.at[0] + ipc.size[0]) {
+        const app = (t.wayland && t.wayland.appId) || ipc.class || ""
+        if (!root.isBrowser(app)) return false
+      }
     }
-    return browsers > 0
+    return tiled > 0
   }
   property bool forceNotch: false   // testing: `ipc call island notch`
   function isBrowser(app) {
@@ -742,9 +753,14 @@ ShellRoot {
     target: Hyprland
     function onRawEvent(event) {
       if (["openwindow", "closewindow", "movewindow", "movewindowv2", "changefloatingmode", "workspace", "workspacev2", "focusedmon"].includes(event.name))
+      {
         Hyprland.refreshToplevels()
+        // The layout settles after the event: geometry again a moment later.
+        toplevelSettle.restart()
+      }
     }
   }
+  Timer { id: toplevelSettle; interval: 250; onTriggered: Hyprland.refreshToplevels() }
 
   // ── Reserved strip: keeps windows below the island ────────────────────────
   Variants {
@@ -754,11 +770,11 @@ ShellRoot {
       screen: modelData
       anchors { top: true; left: true; right: true }
       implicitHeight: 1
-      // Only a browser on screen: no strip, the page goes all the way to the top
-      // and the island floats over it. With other apps beside it the strip stays.
+      // Browser or gap between windows under the pill: no strip, the windows go
+      // all the way to the top and the island sits over them as a notch.
       readonly property var hyprMonitor: Hyprland.monitorFor(modelData)
-      readonly property bool onlyBrowsers: root.onlyBrowsers(hyprMonitor ? hyprMonitor.activeWorkspace : null)
-      exclusiveZone: onlyBrowsers ? 0 : root.reserve
+      readonly property bool notchOk: root.notchOk(hyprMonitor ? hyprMonitor.activeWorkspace : null, modelData)
+      exclusiveZone: notchOk ? 0 : root.reserve
       color: "transparent"
       mask: Region {}
       WlrLayershell.layer: WlrLayer.Bottom
@@ -788,9 +804,9 @@ ShellRoot {
       readonly property bool fullscreenHere: !!hyprMonitor && !!hyprMonitor.activeWorkspace
                                              && hyprMonitor.activeWorkspace.hasFullscreen
       visible: !fullscreenHere || root.mode === "osd"
-      // Only a browser on this screen: when idle the pill docks to the edge like a
-      // notch, in Zen's frame color, and the browser wraps around it.
-      readonly property bool notchScreen: !fullscreenHere && root.onlyBrowsers(hyprMonitor ? hyprMonitor.activeWorkspace : null)
+      // Windows up to the top (see notchOk): when idle the pill becomes a notch
+      // and the window border wraps around it.
+      readonly property bool notchScreen: !fullscreenHere && root.notchOk(hyprMonitor ? hyprMonitor.activeWorkspace : null, modelData)
       readonly property real notchScale: 0.76
       readonly property int notchTop: 3
       readonly property bool notch: (notchScreen || root.forceNotch) && (root.mode === "idle" || root.mode === "ws")

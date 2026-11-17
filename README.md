@@ -18,7 +18,7 @@ music, notifications, volume, a control center, your screenshots, a shelf for fi
 | **Notifications** | They live in the island, with their action buttons, grouped per app. Screenshots fly into the pill with a soft *bloop* and stay draggable. |
 | **OSD** | Volume, brightness and every `omarchy osd` message. |
 | **Shelf** | Drag files onto the pill, collect as many as you like, drag them all out at once (uses [OmaDrop](https://github.com/lucascnunes/omadrop)). |
-| **Browser mode** | With only a browser on screen the page goes all the way up and the pill sits in a notch cut into the window border. |
+| **Notch mode** | With a browser, or the gap between two windows, under the pill, the windows go all the way up and the pill sits in a notch cut into the window border. A terminal under the pill keeps the strip. |
 
 Scroll on the pill for volume (<kbd>Shift</kbd> for brightness), middle-click to play/pause.
 
