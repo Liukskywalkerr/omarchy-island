@@ -744,8 +744,10 @@ ShellRoot {
   // between two windows (2 columns: the notch bridges them). A terminal or any other
   // app under the pill keeps the strip, so its first line stays visible. A single
   // non-browser window (terminal/Files at 80%) is under the pill: strip stays.
+  // ISLAND_NOTCH=off: never a notch, the strip stays everywhere.
+  readonly property bool notchEnabled: Quickshell.env("ISLAND_NOTCH") !== "off"
   function notchOk(ws, screen) {
-    if (!ws || !ws.toplevels || !screen) return false
+    if (!root.notchEnabled || !ws || !ws.toplevels || !screen) return false
     const cx = screen.x + screen.width / 2
     let tiled = 0
     for (const t of ws.toplevels.values) {
