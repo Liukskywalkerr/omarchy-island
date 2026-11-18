@@ -848,6 +848,106 @@ ShellRoot {
     }
   }
 
+  // ── Drop sensor: the shelf while the island is hidden ─────────────────────
+  // With ISLAND_HIDE (browser / 2+ windows) or a fullscreen app the island is
+  // gone, and so is its drop target. A thin invisible strip at the top center
+  // (inside the top gap, so it steals no clicks from the windows) wakes the
+  // shelf when a file is dragged there; the file can be dropped on the strip or
+  // on the shelf that appears. Resting on it (with something on the shelf)
+  // opens the shelf too, to pick files up on another workspace.
+  Variants {
+    model: Quickshell.screens
+    PanelWindow {
+      id: sensor
+      required property var modelData
+      screen: modelData
+      readonly property var hyprMonitor: Hyprland.monitorFor(modelData)
+      readonly property var ws: hyprMonitor ? hyprMonitor.activeWorkspace : null
+      anchors.top: true
+      implicitWidth: 520
+      implicitHeight: 18     // room for the glow; the mouse only sees the top 6 px
+      exclusionMode: ExclusionMode.Ignore
+      color: "transparent"
+      visible: root.hasOmadrop && !!ws && (ws.hasFullscreen || root.islandHides(ws))
+      WlrLayershell.layer: WlrLayer.Overlay
+      WlrLayershell.namespace: "island-drop"
+      WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+      mask: Region { item: hitStrip }
+      Item { id: hitStrip; width: parent.width; height: 6 }
+      property bool dragOver: false
+
+      // Something on the shelf: a thin glowing bar where the island would be,
+      // breathing slowly. It stretches when a file comes near and hands over
+      // to the island when the shelf opens.
+      Item {
+        id: glow
+        anchors.horizontalCenter: parent.horizontalCenter
+        y: 3
+        readonly property bool on: root.shelfItems.length > 0 || sensor.dragOver
+        readonly property bool away: root.mode === "shelf"
+        width: !on ? 0 : sensor.dragOver ? 150 : 64 + Math.min(4, root.shelfItems.length - 1) * 8
+        height: 3
+        opacity: on && !away ? 1 : 0
+        Behavior on width { enabled: root.animate; SpringAnimation { spring: 3; damping: 0.3; epsilon: 0.3 } }
+        Behavior on opacity { id: glowFade; enabled: root.animate; NumberAnimation { duration: glowFade.targetValue > 0.5 ? 320 : 140; easing.type: Easing.OutCubic } }
+        property real breath: 1
+        SequentialAnimation on breath {
+          running: glow.on && !glow.away && root.animate && sensor.visible
+          loops: Animation.Infinite
+          NumberAnimation { to: 0.45; duration: 1400; easing.type: Easing.InOutSine }
+          NumberAnimation { to: 1; duration: 1400; easing.type: Easing.InOutSine }
+        }
+        RectangularShadow {
+          anchors.fill: bar
+          radius: bar.radius
+          blur: sensor.dragOver ? 12 : 9
+          spread: 1
+          color: root.accent
+          opacity: sensor.dragOver ? 1 : 0.35 + 0.55 * glow.breath
+        }
+        Rectangle {
+          id: bar
+          anchors.fill: parent
+          radius: height / 2
+          color: Qt.lighter(root.accent, sensor.dragOver ? 1.35 : 1.1)
+          opacity: sensor.dragOver ? 1 : 0.75 + 0.25 * glow.breath
+        }
+      }
+
+      DropArea {
+        anchors.fill: hitStrip
+        enabled: !root.shelfDragging
+        onEntered: function(drag) {
+          if (!drag.hasUrls) return
+          drag.accept(Qt.CopyAction)
+          sensor.dragOver = true
+          sensorWake.restart()
+        }
+        onExited: { sensor.dragOver = false; sensorWake.stop() }
+        onDropped: function(drop) {
+          if (!drop.hasUrls) return
+          const uris = []
+          for (let i = 0; i < drop.urls.length; i++) uris.push(String(drop.urls[i]))
+          if (!uris.length) return
+          drop.accept(Qt.CopyAction)
+          sensor.dragOver = false
+          root.omadrop(["add", uris.join("\n")])
+          root.openShelf()
+        }
+      }
+      // The bar stretches first, then the island drops out of it.
+      Timer { id: sensorWake; interval: 140; onTriggered: root.openShelf() }
+      HoverHandler {
+        onHoveredChanged: hovered ? sensorDwell.restart() : sensorDwell.stop()
+      }
+      Timer {
+        id: sensorDwell
+        interval: 350
+        onTriggered: if (root.shelfItems.length) root.openShelf()
+      }
+    }
+  }
+
   // ── The island ────────────────────────────────────────────────────────────
   Variants {
     model: Quickshell.screens
@@ -870,8 +970,27 @@ ShellRoot {
       readonly property bool fullscreenHere: !!hyprMonitor && !!hyprMonitor.activeWorkspace
                                              && hyprMonitor.activeWorkspace.hasFullscreen
       readonly property bool hiddenHere: root.islandHides(hyprMonitor ? hyprMonitor.activeWorkspace : null)
-      visible: fullscreenHere ? root.mode === "osd"
-                              : (!hiddenHere || (root.mode !== "idle" && root.mode !== "ws"))
+      readonly property bool shown: fullscreenHere ? (root.mode === "osd" || root.mode === "shelf")
+                                                   : (!hiddenHere || (root.mode !== "idle" && root.mode !== "ws"))
+      // Coming out of hiding the pill drops from the top edge (from the glow bar)
+      // with a little bounce; going back it slips up quickly. The window stays
+      // mapped until the way out is over.
+      property real reveal: shown ? 1 : 0
+      Behavior on reveal {
+        id: revealAnim
+        enabled: root.animate
+        NumberAnimation {
+          duration: revealAnim.targetValue > 0.5 ? 460 : 200
+          easing.type: revealAnim.targetValue > 0.5 ? Easing.OutBack : Easing.InCubic
+          easing.overshoot: 1.25
+        }
+      }
+      visible: shown || reveal > 0.001
+      readonly property real revealT: Math.max(0, Math.min(1, reveal))
+      // Fully out and staying: only then the resting content (clock, workspaces,
+      // satellites) may show. Otherwise, coming out of hiding the clock flashed
+      // before the shelf, and going back it reappeared while sliding away.
+      readonly property bool calm: shown && reveal >= 0.999
       // Windows up to the top (see notchOk): when idle the pill becomes a notch
       // and the window border wraps around it.
       readonly property bool notchScreen: !fullscreenHere && root.notchOk(hyprMonitor ? hyprMonitor.activeWorkspace : null, modelData)
@@ -974,9 +1093,13 @@ ShellRoot {
         anchors.fill: pill
         transformOrigin: Item.Top
         scale: pill.scale
+        transform: [
+          Scale { origin.x: pill.width / 2; origin.y: 0; xScale: 0.55 + 0.45 * win.reveal; yScale: 0.25 + 0.75 * win.reveal },
+          Translate { y: -(1 - win.reveal) * (root.pillTop + 14) }
+        ]
         // No shadow with the notch: it darkened the page around it but not the
         // background redrawn inside the notch, leaving a visible box and line.
-        opacity: win.notch ? 0 : pill.opacity
+        opacity: win.notch ? 0 : pill.opacity * win.revealT
         Behavior on opacity { enabled: root.animate; NumberAnimation { duration: 180 } }
         radius: pill.radius
         blur: root.mode === "idle" || root.mode === "ws" ? 22 : 34
@@ -1001,7 +1124,7 @@ ShellRoot {
         property bool inNotch: false
         readonly property bool notched: inNotch && win.notch
         signal clicked()
-        readonly property bool shown: on && (!win.notch || inNotch) && (root.mode === "idle" || root.mode === "ws")
+        readonly property bool shown: on && win.calm && (!win.notch || inNotch) && (root.mode === "idle" || root.mode === "ws")
         // On hover (quick actions) caffeine and do not disturb don't vanish: the
         // same circle moves into the pill and grows to its button's spot,
         // becoming the button (like the clock).
@@ -1346,6 +1469,17 @@ ShellRoot {
         scale: (win.notch ? win.notchScale : 1) * root.gulp
         Behavior on y { enabled: root.animate; NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
         Behavior on scale { enabled: root.animate; NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
+        // Reveal from hiding (win.reveal): squeezed against the top edge, then
+        // drops and widens into place.
+        transform: [
+          Scale {
+            origin.x: pill.width / 2
+            origin.y: 0
+            xScale: 0.55 + 0.45 * win.reveal
+            yScale: 0.25 + 0.75 * win.reveal
+          },
+          Translate { y: -(1 - win.reveal) * (root.pillTop + 14) }
+        ]
         width: win.targetSize.width
         height: win.targetSize.height
         radius: Math.min(win.targetRadius, height / 2)
@@ -1353,8 +1487,8 @@ ShellRoot {
         clip: true
         antialiasing: true
         // With the menu open the pill "lends" itself to the menu, which starts from the same shape.
-        opacity: root.mode === "menu" ? 0 : 1
-        Behavior on opacity { enabled: root.animate; NumberAnimation { duration: root.mode === "menu" ? 90 : 0 } }
+        opacity: (root.mode === "menu" ? 0 : 1) * Math.min(1, win.revealT * 1.6)
+        Behavior on opacity { enabled: root.animate && win.revealT >= 1; NumberAnimation { duration: root.mode === "menu" ? 90 : 0 } }
 
         Behavior on width  { SpringAnimation { spring: 3.2; damping: 0.28; epsilon: 0.3 } }
         Behavior on height { enabled: root.animate; SpringAnimation { spring: 3.2; damping: 0.32; epsilon: 0.3 } }
@@ -1425,7 +1559,7 @@ ShellRoot {
           anchors.centerIn: parent
           spacing: 0
           opacity: root.mode === "idle" ? 1 : 0
-          visible: opacity > 0
+          visible: opacity > 0 && win.calm
           // Transition: outgoing content vanishes and shrinks at once; incoming
           // content waits for the pill to start reshaping, then springs in.
           Behavior on opacity { id: fadeIn1; enabled: root.animate; NumberAnimation { duration: fadeIn1.targetValue > 0.5 ? 300 : 90; easing.type: fadeIn1.targetValue > 0.5 ? Easing.InOutCubic : Easing.OutQuad } }
@@ -1569,7 +1703,7 @@ ShellRoot {
           anchors.centerIn: parent
           spacing: 7
           opacity: root.mode === "ws" ? 1 : 0
-          visible: opacity > 0
+          visible: opacity > 0 && win.calm
           // Transition: outgoing content vanishes and shrinks at once; incoming
           // content waits for the pill to start reshaping, then springs in.
           Behavior on opacity { id: fadeIn2; enabled: root.animate; NumberAnimation { duration: fadeIn2.targetValue > 0.5 ? 300 : 90; easing.type: fadeIn2.targetValue > 0.5 ? Easing.InOutCubic : Easing.OutQuad } }
@@ -1736,6 +1870,7 @@ ShellRoot {
           x: wx - pill.x
           y: wy
           opacity: shown ? 1 : 0
+          visible: opacity > 0 && (win.calm || spot !== "idle")
           // Leaves immediately (must not pass over the incoming text), returns smoothly.
           Behavior on opacity { id: clockFade; enabled: root.animate; NumberAnimation { duration: clockFade.targetValue > 0.5 ? 220 : 60 } }
         }
